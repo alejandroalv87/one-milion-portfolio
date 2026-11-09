@@ -17,6 +17,18 @@ export default function InvestmentProgressPage() {
     if (!snaps.length) {
       snaps = HISTORY_SEED.map((s) => ({ ...s, cash: null }));
       saveSnapshots(snaps);
+    } else {
+      // One-time top-up: if the series already exists but predates Oct 2026,
+      // append Oct 2026 mirroring Sep 2026. Runs once (flag), so a later delete sticks.
+      let done = false;
+      try { done = localStorage.getItem("pt_seed_oct26_done") === "1"; } catch {}
+      const sep = snaps.find((s) => s.month === "2026-09");
+      const hasOct = snaps.some((s) => s.month === "2026-10");
+      if (!done && sep && !hasOct) {
+        snaps = [...snaps, { ...sep, month: "2026-10" }].sort((a, b) => a.month.localeCompare(b.month));
+        saveSnapshots(snaps);
+      }
+      try { localStorage.setItem("pt_seed_oct26_done", "1"); } catch {}
     }
     setRows(snaps);
   }, []);
@@ -87,8 +99,21 @@ export default function InvestmentProgressPage() {
         </div>
       </div>
 
+      {rows.length > 0 && (
+        <div className="cols" style={{ marginBottom: 18 }}>
+          <div className="panel">
+            <div className="phead"><h2>Cash added per year</h2><span className="sub">New money each calendar year (excludes gains &amp; dividends)</span></div>
+            <div className="pbody"><CashPerYear byYear={k.byYear || []} ccy={ccy} /></div>
+          </div>
+          <div className="panel">
+            <div className="phead"><h2>What stands out</h2></div>
+            <div className="pbody" style={{ paddingTop: 6 }}><WhatStandsOut k={k} ccy={ccy} /></div>
+          </div>
+        </div>
+      )}
+
       <div className="panel">
-        <div className="phead"><h2>Monthly snapshots</h2><span className="sub">Edit any cell · figures in {ccy}</span></div>
+        <div className="phead"><h2>Monthly snapshots</h2><span className="sub">Newest first · edit any cell · figures in {ccy}</span></div>
         <div className="scroll-x">
           <table>
             <thead>
@@ -98,11 +123,11 @@ export default function InvestmentProgressPage() {
               {rows.length === 0 && (
                 <tr><td colSpan={7} className="muted" style={{ textAlign: "center", padding: 24 }}>No months yet — click “Add month”.</td></tr>
               )}
-              {rows.map((r) => {
+              {rows.slice().reverse().map((r) => {
                 const g = r.value != null && r.invested != null ? r.value - r.invested : null;
                 return (
                   <tr key={r.month}>
-                    <td><input className="input" type="month" value={r.month} onChange={(e) => updateMonth(r.month, e.target.value)} style={{ padding: "6px 8px", width: 150 }} /></td>
+                    <td><input className="input" type="month" value={r.month} onChange={(e) => updateMonth(r.month, e.target.value)} style={{ padding: "6px 8px", width: 172 }} /></td>
                     <td><CellInput value={r.invested} onChange={(v) => update(r.month, "invested", v)} /></td>
                     <td><CellInput value={r.value} onChange={(v) => update(r.month, "value", v)} /></td>
                     <td><CellInput value={r.added} onChange={(v) => update(r.month, "added", v)} /></td>
@@ -161,23 +186,109 @@ function computeMetrics(rows) {
     }
   }
 
-  // Max drawdown on value
+  // Max drawdown on value (track peak value + trough value)
   let peak = -Infinity, ddPct = 0, ddFrom = null, ddTo = null, curPeakMonth = null;
+  let ddFromVal = null, ddToVal = null, peakVal = null;
   clean.forEach((r) => {
     if (r.value > peak) { peak = r.value; curPeakMonth = r.month; }
     const dd = peak ? (r.value - peak) / peak * 100 : 0;
-    if (dd < ddPct) { ddPct = dd; ddFrom = curPeakMonth; ddTo = r.month; }
+    if (dd < ddPct) { ddPct = dd; ddFrom = curPeakMonth; ddTo = r.month; ddFromVal = peak; ddToVal = r.value; }
   });
+
+  // Cash added per calendar year
+  const byYearMap = {};
+  rows.forEach((r) => { const y = String(r.month).slice(0, 4); byYearMap[y] = (byYearMap[y] || 0) + (Number(r.added) || 0); });
+  const byYear = Object.keys(byYearMap).sort().map((y) => ({ year: y, added: byYearMap[y] }));
+  const latestYear = byYear.length ? byYear[byYear.length - 1] : null;
+
+  const years = (monthToDate(last.month) - monthToDate(clean[0].month)) / (365 * 864e5);
+  const mult = invested ? value / invested : null;
 
   return {
     value, invested, gain, gainPct, dividends, xirr,
-    ddPct: ddPct < 0 ? ddPct : null, ddFrom, ddTo,
+    ddPct: ddPct < 0 ? ddPct : null, ddFrom, ddTo, ddFromVal, ddToVal,
     span: true, first: clean[0].month, last: last.month,
+    years, mult, byYear, latestYear,
   };
 }
 function monthToDate(m) {
   const [y, mo] = String(m).split("-").map(Number);
   return new Date(y, (mo || 1) - 1, 1).getTime();
+}
+
+function compactMoney(v, ccy) {
+  try {
+    return Number(v).toLocaleString("en-US", {
+      style: "currency", currency: /^[A-Za-z]{3}$/.test(ccy) ? ccy : "EUR",
+      notation: "compact", maximumFractionDigits: 1,
+    });
+  } catch {
+    return Math.round(v).toLocaleString("en-US");
+  }
+}
+
+function CashPerYear({ byYear, ccy }) {
+  if (!byYear.length) return <div className="empty">No contributions recorded.</div>;
+  const W = 560, H = 280, m = { t: 16, r: 10, b: 28, l: 48 };
+  const iw = W - m.l - m.r, ih = H - m.t - m.b;
+  const max = Math.max(1, ...byYear.map((b) => b.added));
+  const niceMax = Math.ceil(max / 10000) * 10000 || max;
+  const y = (v) => m.t + (1 - v / niceMax) * ih;
+  const bw = iw / byYear.length;
+  const ticks = 5;
+  return (
+    <svg viewBox={`0 0 ${W} ${H}`} style={{ width: "100%", height: "auto", overflow: "visible" }} role="img" aria-label="Cash added per year">
+      {Array.from({ length: ticks }, (_, i) => {
+        const v = (niceMax / (ticks - 1)) * i;
+        return (
+          <g key={i}>
+            <line x1={m.l} y1={y(v)} x2={W - m.r} y2={y(v)} stroke="var(--grid)" strokeWidth="1" />
+            <text x={m.l - 8} y={y(v) + 4} textAnchor="end" fill="var(--muted)" fontSize="11">{compactMoney(v, ccy)}</text>
+          </g>
+        );
+      })}
+      {byYear.map((b, i) => {
+        const cx = m.l + bw * i + bw / 2;
+        const bh = (b.added / niceMax) * ih;
+        const w = Math.min(44, bw * 0.6);
+        return (
+          <g key={b.year}>
+            <rect x={cx - w / 2} y={y(b.added)} width={w} height={Math.max(bh, 0)} rx="4" fill="var(--blue)" />
+            <text x={cx} y={y(b.added) - 7} textAnchor="middle" fill="var(--ink)" fontSize="11" fontWeight="600">{compactMoney(b.added, ccy)}</text>
+            <text x={cx} y={H - 9} textAnchor="middle" fill="var(--muted)" fontSize="11">{b.year}</text>
+          </g>
+        );
+      })}
+    </svg>
+  );
+}
+
+function WhatStandsOut({ k, ccy }) {
+  const fmtC = (v) => fmtCurrency(v, ccy, 0);
+  const bullets = [];
+  if (k.xirr != null && k.years) {
+    bullets.push({ c: "var(--blue)", t: <><b>~{k.xirr.toFixed(0)}% money-weighted return</b> per year over {k.years.toFixed(1)} years — the honest performance number, {k.xirr > 10 ? "well above" : "versus"} a broad index's long-run ~10%.</> });
+  }
+  if (k.mult != null) {
+    bullets.push({ c: "var(--green)", t: <>Value is <b>{k.mult.toFixed(2)}×</b> the cash put in: {fmtC(k.invested)} invested is now worth {fmtC(k.value)}.</> });
+  }
+  if (k.ddPct != null) {
+    bullets.push({ c: "var(--red)", t: <>A <b>{k.ddPct.toFixed(0)}% drawdown</b> ({fmtC(k.ddFromVal)} → {fmtC(k.ddToVal)}, {k.ddFrom} → {k.ddTo}) — the sharpest dip in the record.</> });
+  }
+  if (k.dividends) {
+    bullets.push({ c: "var(--muted)", t: <><b>{fmtC(k.dividends)}</b> collected in dividends over the period, reinvested in the account.</> });
+  }
+  if (k.latestYear) {
+    const low = k.latestYear.added < 3000;
+    bullets.push({ c: "var(--accent)", t: <>Contributions in <b>{k.latestYear.year}</b>: {fmtC(k.latestYear.added)}{low ? " — new capital has nearly paused, so recent moves are market-driven" : " of fresh capital"}.</> });
+  }
+  return (
+    <ul className="facts">
+      {bullets.map((b, i) => (
+        <li key={i}><span className="dot" style={{ background: b.c }} /><span>{b.t}</span></li>
+      ))}
+    </ul>
+  );
 }
 
 function ProgressChart({ rows, ccy }) {

@@ -1,5 +1,8 @@
 import { NextResponse } from "next/server";
-import { verifySessionToken, SESSION_COOKIE } from "@/lib/session";
+// NOTE: use a relative import here (not the "@/" alias). Next.js compiles
+// middleware with the Edge compiler, which does not reliably resolve the
+// jsconfig path alias at build time on some hosts (e.g. Vercel).
+import { verifySessionToken, SESSION_COOKIE } from "./lib/session";
 
 const PUBLIC_PATHS = ["/login"];
 const PUBLIC_API_PREFIX = "/api/auth/";

@@ -8,10 +8,19 @@ earnings date, institutional ownership, and insider transactions.
 Built with Next.js (App Router). Market data comes from **Yahoo Finance** via
 server-side routes (so the browser never calls Yahoo directly).
 
-## Nothing to configure
+## Configuration
 
-There is no key to manage. You can deploy as-is. The only optional setting is
-`DATA_CACHE_TTL` (seconds to cache data server-side; default 60).
+No market-data key is needed. Settings (all optional) go in `.env.local` or your
+host's environment:
+
+- `DATA_CACHE_TTL` — seconds to cache data server-side (default 60).
+- **Access gate (optional).** Leave off and the site is fully open. To require a
+  single shared password before anyone can view it, set **both**:
+  - `SITE_PASSWORD` — the password you share with whoever may access it.
+  - `AUTH_SECRET` — a long random string that signs the login cookie
+    (`node -e "console.log(require('crypto').randomBytes(48).toString('base64url'))"`).
+  With both set, visitors hit a password screen; a "Log out" item appears in the
+  sidebar. On Netlify, set these as environment variables and redeploy.
 
 ## Run locally
 
@@ -74,11 +83,14 @@ tiles are a raw sum, so they're only accurate if your positions share a currency
 
 ## Tabs
 
-- **Portfolio** — holdings table with live prices and gain/loss, CSV/IBKR import.
+- **Portfolio** — holdings table with live prices and gain/loss, sortable columns
+  (default by weight), FX-normalized to a base currency, CSV/IBKR import.
 - **Cash & Allocation** — enter your bank-account cash manually; see an
   Investment-vs-Cash donut, net worth, and a one-click "save this month" button.
-- **History** — a manual monthly table (invested / value / cash) with an
-  evolution chart (value vs invested, plus net worth), like a portfolio tracker.
+- **Investment progress** — a monthly table (invested / value / added / dividend),
+  pre-seeded with your real history, with an evolution chart (value vs invested)
+  and KPIs (gain, money-weighted XIRR, dividends, max drawdown). Add a row as each
+  month ends.
 - **Stock detail** — click any holding: financials, next earnings, ownership,
   insiders.
 
@@ -89,17 +101,23 @@ All manual figures (cash, snapshots, base currency) are stored in your browser
 
 ```
 app/
-  page.js                    Dashboard + holdings import
-  allocation/page.js         Cash & Allocation (manual cash, donut)
-  history/page.js            Monthly snapshots + evolution chart
-  stock/[symbol]/page.js     Stock detail (overview/financials/ownership/insiders)
-  api/data/*                 quote / profile / financials / earnings / ownership / insiders
+  page.js                      Dashboard + holdings import (sortable, FX-normalized)
+  allocation/page.js           Cash & Allocation (manual cash, donut)
+  investment-progress/page.js  Monthly snapshots + evolution chart + KPIs
+  stock/[symbol]/page.js       Stock detail (overview/financials/ownership/insiders)
+  login/page.js                Password screen (only used when the gate is on)
+  api/data/*                   quote / profile / financials / earnings / ownership / insiders / fx
+  api/auth/*                   login / logout / status (shared-password gate)
 lib/
-  yahoo.js                   Yahoo Finance client (chart + quoteSummary/crumb) + cache
-  holdings.js                CSV parsing, IBKR support, exchange→Yahoo symbol map
-  portfolio-state.js         Manual cash accounts, base currency, monthly snapshots
-  format.js                  Number/date formatting
-components/AppShell.js       Sidebar + ticker search
+  yahoo.js                     Yahoo Finance client (chart + quoteSummary/crumb) + cache
+  holdings.js                  CSV parsing, IBKR support, exchange→Yahoo symbol map
+  normalize.js                 Pence (GBp) handling + cost reconciliation
+  portfolio-state.js           Cash accounts, currencies, monthly snapshots
+  history-seed.js              Your real monthly history (seeds Investment progress)
+  session.js                   Edge-safe session for the optional password gate
+  format.js                    Number/date formatting
+middleware.js                  Enforces the password gate when configured
+components/AppShell.js         Sidebar + ticker search + logout
 ```
 
 ## Possible add-ons

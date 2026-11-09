@@ -17,6 +17,7 @@ export default function Dashboard() {
   const [showImport, setShowImport] = useState(false);
   const [raw, setRaw] = useState("");
   const [parseMsg, setParseMsg] = useState("");
+  const [sort, setSort] = useState({ key: "weight", dir: "desc" });
 
   useEffect(() => {
     setBase(loadBaseCurrency());
@@ -118,6 +119,26 @@ export default function Dashboard() {
     setBase(b); saveBaseCurrency(b);
   }
 
+  const sortedRows = useMemo(() => {
+    const arr = [...rows];
+    const { key, dir } = sort;
+    const mul = dir === "asc" ? 1 : -1;
+    arr.sort((a, b) => {
+      if (key === "symbol") return mul * String(a.symbol).localeCompare(String(b.symbol));
+      const pick = { weight: "mktValueBase", mktValueBase: "mktValueBase", priceMain: "priceMain", dayPct: "dayPct", shares: "shares", costMain: "costMain", gainBase: "gainBase" };
+      const f = pick[key] || "mktValueBase";
+      const va = a[f] == null ? -Infinity : a[f];
+      const vb = b[f] == null ? -Infinity : b[f];
+      return mul * (va - vb);
+    });
+    return arr;
+  }, [rows, sort]);
+
+  function toggleSort(key) {
+    setSort((s) => (s.key === key ? { key, dir: s.dir === "asc" ? "desc" : "asc" } : { key, dir: key === "symbol" ? "asc" : "desc" }));
+  }
+  const arrow = (key) => (sort.key === key ? (sort.dir === "asc" ? " ▲" : " ▼") : "");
+
   const baseMoney = (v) => (v == null ? "–" : fmtCurrency(v, base));
   const localMoney = (v, ccy) =>
     v == null ? "–" : ccy && ccy !== base ? `${fmtNum(v, v < 10 ? 4 : 2)} ${ccy}` : fmtCurrency(v, base);
@@ -196,12 +217,18 @@ export default function Dashboard() {
               <table>
                 <thead>
                   <tr>
-                    <th>Symbol</th><th>Price</th><th>Day</th><th>Shares</th>
-                    <th>Mkt value ({base})</th><th>Avg cost</th><th>Gain / loss ({base})</th><th>Weight</th>
+                    <th onClick={() => toggleSort("symbol")} style={{ cursor: "pointer" }}>Symbol{arrow("symbol")}</th>
+                    <th onClick={() => toggleSort("priceMain")} style={{ cursor: "pointer" }}>Price{arrow("priceMain")}</th>
+                    <th onClick={() => toggleSort("dayPct")} style={{ cursor: "pointer" }}>Day{arrow("dayPct")}</th>
+                    <th onClick={() => toggleSort("shares")} style={{ cursor: "pointer" }}>Shares{arrow("shares")}</th>
+                    <th onClick={() => toggleSort("mktValueBase")} style={{ cursor: "pointer" }}>Mkt value ({base}){arrow("mktValueBase")}</th>
+                    <th onClick={() => toggleSort("costMain")} style={{ cursor: "pointer" }}>Avg cost{arrow("costMain")}</th>
+                    <th onClick={() => toggleSort("gainBase")} style={{ cursor: "pointer" }}>Gain / loss ({base}){arrow("gainBase")}</th>
+                    <th onClick={() => toggleSort("weight")} style={{ cursor: "pointer" }}>Weight{arrow("weight")}</th>
                   </tr>
                 </thead>
                 <tbody>
-                  {rows.map((r) => (
+                  {sortedRows.map((r) => (
                     <tr key={r.symbol} className="clickable" onClick={() => router.push(`/stock/${r.symbol}`)}>
                       <td><span className="sym">{r.symbol}</span>{r.name && <span className="name">{r.name}</span>}</td>
                       <td>{localMoney(r.priceMain, r.instCcy)}</td>

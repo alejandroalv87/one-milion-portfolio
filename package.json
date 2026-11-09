@@ -1,0 +1,17 @@
+{
+  "name": "portfolio-dashboard",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Private portfolio dashboard with live TIKR-style stock data. No login.",
+  "scripts": {
+    "dev": "next dev",
+    "build": "next build",
+    "start": "next start",
+    "lint": "next lint"
+  },
+  "dependencies": {
+    "next": "^14.2.35",
+    "react": "18.3.1",
+    "react-dom": "18.3.1"
+  }
+}

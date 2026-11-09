@@ -5,7 +5,7 @@ import {
   loadSnapshots, saveSnapshots, loadProgressCurrency, saveProgressCurrency, currentMonth,
 } from "@/lib/portfolio-state";
 import { HISTORY_SEED } from "@/lib/history-seed";
-import { fmtPct, signClass } from "@/lib/format";
+import { fmtPct, signClass, fmtCurrency } from "@/lib/format";
 
 export default function InvestmentProgressPage() {
   const [rows, setRows] = useState([]);
@@ -21,13 +21,7 @@ export default function InvestmentProgressPage() {
     setRows(snaps);
   }, []);
 
-  const fmt = useMemo(
-    () => (v) =>
-      v == null || v === "" || Number.isNaN(Number(v))
-        ? "–"
-        : Number(v).toLocaleString("en-US", { style: "currency", currency: ccy || "EUR", maximumFractionDigits: 0 }),
-    [ccy]
-  );
+  const fmt = useMemo(() => (v) => fmtCurrency(v, ccy, 0), [ccy]);
 
   function persist(next) {
     const sorted = next.slice().sort((a, b) => String(a.month).localeCompare(String(b.month)));
@@ -51,7 +45,8 @@ export default function InvestmentProgressPage() {
   }
   function changeCcy(v) {
     const c = v.toUpperCase().slice(0, 4);
-    setCcy(c); saveProgressCurrency(c);
+    setCcy(c);
+    if (/^[A-Z]{3}$/.test(c)) saveProgressCurrency(c);
   }
 
   const k = useMemo(() => computeMetrics(rows), [rows]);
@@ -217,7 +212,7 @@ function ProgressChart({ rows, ccy }) {
     let i = Math.round(((px - m.l) / iw) * (data.length - 1));
     setHover(Math.max(0, Math.min(data.length - 1, i)));
   }
-  const fmtMoney = (v) => (v == null ? "–" : Number(v).toLocaleString("en-US", { style: "currency", currency: ccy || "EUR", maximumFractionDigits: 0 }));
+  const fmtMoney = (v) => fmtCurrency(v, ccy, 0);
   const h = hover != null ? data[hover] : null;
 
   return (

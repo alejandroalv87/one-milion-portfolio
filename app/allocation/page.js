@@ -7,7 +7,7 @@ import {
   loadSnapshots, saveSnapshots, upsertSnapshot, currentMonth, uid,
 } from "@/lib/portfolio-state";
 import { instrumentCurrency } from "@/lib/normalize";
-import { fmtPct } from "@/lib/format";
+import { fmtPct, fmtCurrency } from "@/lib/format";
 
 export default function AllocationPage() {
   const [ccy, setCcy] = useState("USD");
@@ -68,12 +68,7 @@ export default function AllocationPage() {
   const invPct = net ? (investment / net) * 100 : 0;
   const cashPct = net ? (cashSum / net) * 100 : 0;
 
-  const fmt = useMemo(() => {
-    return (v) =>
-      v == null || Number.isNaN(Number(v))
-        ? "–"
-        : Number(v).toLocaleString("en-US", { style: "currency", currency: ccy || "USD", maximumFractionDigits: 0 });
-  }, [ccy]);
+  const fmt = useMemo(() => (v) => fmtCurrency(v, ccy, 0), [ccy]);
 
   function updateCash(id, field, value) {
     setCash((list) => {
@@ -97,7 +92,8 @@ export default function AllocationPage() {
     });
   }
   function changeCcy(v) {
-    setCcy(v); saveBaseCurrency(v);
+    setCcy(v);
+    if (/^[A-Za-z]{3}$/.test(v)) saveBaseCurrency(v);
   }
   function saveSnapshot() {
     const m = currentMonth();

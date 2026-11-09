@@ -116,7 +116,8 @@ export default function Dashboard() {
   }
   function changeBase(v) {
     const b = v.toUpperCase().slice(0, 4);
-    setBase(b); saveBaseCurrency(b);
+    setBase(b);
+    if (/^[A-Z]{3}$/.test(b)) saveBaseCurrency(b);
   }
 
   const sortedRows = useMemo(() => {

@@ -3,26 +3,30 @@ import { useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 import AppShell from "@/components/AppShell";
 import { parseHoldings, loadHoldings, saveHoldings } from "@/lib/holdings";
+import { instrumentCurrency, reconcileCost } from "@/lib/normalize";
+import { loadBaseCurrency, saveBaseCurrency } from "@/lib/portfolio-state";
 import { fmtCurrency, fmtNum, fmtPct, signClass } from "@/lib/format";
 
 export default function Dashboard() {
   const router = useRouter();
   const [holdings, setHoldings] = useState([]);
   const [quotes, setQuotes] = useState({});
+  const [fx, setFx] = useState({});
+  const [base, setBase] = useState("USD");
   const [loadingQuotes, setLoadingQuotes] = useState(false);
   const [showImport, setShowImport] = useState(false);
   const [raw, setRaw] = useState("");
   const [parseMsg, setParseMsg] = useState("");
 
-  // initial holdings + import flag
   useEffect(() => {
+    setBase(loadBaseCurrency());
     const h = loadHoldings();
     setHoldings(h);
     const params = new URLSearchParams(window.location.search);
-    if (params.get("import") === "1" || h.length === 0) setShowImport(h.length === 0 ? true : true);
+    if (params.get("import") === "1" || h.length === 0) setShowImport(true);
   }, []);
 
-  // fetch quotes when holdings change
+  // live quotes
   useEffect(() => {
     const syms = holdings.map((h) => h.symbol).filter(Boolean);
     if (!syms.length) { setQuotes({}); return; }
@@ -41,38 +45,55 @@ export default function Dashboard() {
     return () => { cancelled = true; };
   }, [holdings]);
 
+  // FX rates for all instrument currencies -> base
+  useEffect(() => {
+    const ccys = new Set();
+    Object.values(quotes).forEach((q) => {
+      const { ccy } = instrumentCurrency(q.currency);
+      if (ccy) ccys.add(ccy);
+    });
+    if (!ccys.size) return;
+    let cancelled = false;
+    fetch(`/api/data/fx?base=${encodeURIComponent(base)}&ccy=${encodeURIComponent([...ccys].join(","))}`)
+      .then((r) => r.json())
+      .then((j) => { if (!cancelled) setFx(j.data || {}); })
+      .catch(() => {});
+    return () => { cancelled = true; };
+  }, [quotes, base]);
+
   const rows = useMemo(() => {
     return holdings.map((h) => {
       const q = quotes[h.symbol] || {};
-      const price = q.price ?? null;
+      const { ccy: instCcy, div } = instrumentCurrency(q.currency);
+      const priceMain = q.price != null ? q.price / div : null;        // in instCcy
+      const costMain = reconcileCost(h.cost, priceMain, div);           // in instCcy
+      const rate = instCcy ? fx[instCcy] : null;                        // instCcy -> base
       const shares = h.shares ?? null;
-      const mktValue = price != null && shares != null ? price * shares : null;
-      const costBasis = h.cost != null && shares != null ? h.cost * shares : null;
-      const gain = mktValue != null && costBasis != null ? mktValue - costBasis : null;
-      const gainPct = gain != null && costBasis ? (gain / costBasis) * 100 : null;
-      const dayChg = q.change ?? null;
-      const dayPct = q.changesPercentage ?? null;
+      const mktValueBase = priceMain != null && shares != null && rate != null ? priceMain * shares * rate : null;
+      const costBase = costMain != null && shares != null && rate != null ? costMain * shares * rate : null;
+      const gainBase = mktValueBase != null && costBase != null ? mktValueBase - costBase : null;
+      const gainPct = gainBase != null && costBase ? (gainBase / costBase) * 100 : null;
       return {
-        ...h, name: h.name || q.name || "", price, shares, mktValue, costBasis,
-        gain, gainPct, dayChg, dayPct, currency: q.currency || null,
+        ...h, name: h.name || q.name || "", instCcy, priceMain, costMain,
+        shares, mktValueBase, costBase, gainBase, gainPct,
+        dayPct: q.changesPercentage ?? null,
       };
     });
-  }, [holdings, quotes]);
+  }, [holdings, quotes, fx, base]);
 
   const totals = useMemo(() => {
-    let value = 0, cost = 0, day = 0, haveValue = false, haveCost = false;
+    let value = 0, cost = 0, day = 0, hasVal = false, hasCost = false, missing = 0;
     rows.forEach((r) => {
-      if (r.mktValue != null) { value += r.mktValue; haveValue = true; }
-      if (r.costBasis != null) { cost += r.costBasis; haveCost = true; }
-      if (r.mktValue != null && r.dayPct != null) {
-        const prev = r.mktValue / (1 + r.dayPct / 100);
-        day += r.mktValue - prev;
+      if (r.mktValueBase != null) { value += r.mktValueBase; hasVal = true; } else if (r.shares) missing++;
+      if (r.costBase != null) { cost += r.costBase; hasCost = true; }
+      if (r.mktValueBase != null && r.dayPct != null) {
+        day += r.mktValueBase - r.mktValueBase / (1 + r.dayPct / 100);
       }
     });
-    const gain = haveValue && haveCost ? value - cost : null;
+    const gain = hasVal && hasCost ? value - cost : null;
     const gainPct = gain != null && cost ? (gain / cost) * 100 : null;
     const dayPct = value && day ? (day / (value - day)) * 100 : null;
-    return { value: haveValue ? value : null, day, dayPct, gain, gainPct, count: rows.length };
+    return { value: hasVal ? value : null, day, dayPct, gain, gainPct, count: rows.length, missing };
   }, [rows]);
 
   function doImport() {
@@ -85,12 +106,6 @@ export default function Dashboard() {
     setShowImport(false);
     setRaw("");
   }
-
-  const money = (v, ccy) => {
-    if (v == null) return "–";
-    return ccy && ccy !== "USD" ? `${fmtNum(v, 2)} ${ccy}` : fmtCurrency(v);
-  };
-
   function onFile(e) {
     const f = e.target.files?.[0];
     if (!f) return;
@@ -98,8 +113,15 @@ export default function Dashboard() {
     reader.onload = () => setRaw(String(reader.result || ""));
     reader.readAsText(f);
   }
+  function changeBase(v) {
+    const b = v.toUpperCase().slice(0, 4);
+    setBase(b); saveBaseCurrency(b);
+  }
 
-  const pct = (r) => (totals.value && r.mktValue != null ? (r.mktValue / totals.value) * 100 : null);
+  const baseMoney = (v) => (v == null ? "–" : fmtCurrency(v, base));
+  const localMoney = (v, ccy) =>
+    v == null ? "–" : ccy && ccy !== base ? `${fmtNum(v, v < 10 ? 4 : 2)} ${ccy}` : fmtCurrency(v, base);
+  const weight = (r) => (totals.value && r.mktValueBase != null ? (r.mktValueBase / totals.value) * 100 : null);
 
   return (
     <AppShell active="dashboard">
@@ -111,7 +133,10 @@ export default function Dashboard() {
             {loadingQuotes ? " · refreshing prices…" : ""}
           </div>
         </div>
-        <div className="flex gap8">
+        <div className="flex gap8 items-center">
+          <label className="muted" style={{ fontSize: 12.5 }}>Base</label>
+          <input className="input" style={{ width: 72 }} value={base}
+            onChange={(e) => changeBase(e.target.value)} aria-label="Base currency" />
           <button className="btn ghost" onClick={() => setShowImport((v) => !v)}>
             {holdings.length ? "Import / update" : "Import holdings"}
           </button>
@@ -128,10 +153,8 @@ export default function Dashboard() {
               detected automatically, foreign tickers are mapped to Yahoo symbols
               (e.g. 3918 → 3918.HK), and TOTAL / Cash / options / closed rows are skipped.
             </p>
-            <textarea
-              className="input" value={raw} onChange={(e) => setRaw(e.target.value)}
-              placeholder={"Symbol,Shares,Cost\nAAPL,50,172.40\nGOOGL,30,138.10\nMSFT,20,410.00"}
-            />
+            <textarea className="input" value={raw} onChange={(e) => setRaw(e.target.value)}
+              placeholder={"Symbol,Shares,Cost\nAAPL,50,172.40\nGOOGL,30,138.10"} />
             <div className="flex gap12 items-center" style={{ marginTop: 12 }}>
               <button className="btn" onClick={doImport} disabled={!raw.trim()}>Import</button>
               <label className="btn ghost" style={{ cursor: "pointer" }}>
@@ -147,49 +170,50 @@ export default function Dashboard() {
         <>
           <div className="stat-row" style={{ marginBottom: 18 }}>
             <div className="stat">
-              <div className="k">Market value</div>
-              <div className="v tnum">{fmtCurrency(totals.value)}</div>
+              <div className="k">Market value ({base})</div>
+              <div className="v tnum">{baseMoney(totals.value)}</div>
             </div>
             <div className="stat">
               <div className="k">Day change</div>
-              <div className={"v tnum " + signClass(totals.day)}>{fmtCurrency(totals.day)}</div>
+              <div className={"v tnum " + signClass(totals.day)}>{baseMoney(totals.day)}</div>
               <div className={"d " + signClass(totals.dayPct)}>{fmtPct(totals.dayPct)}</div>
             </div>
             <div className="stat">
               <div className="k">Total gain / loss</div>
-              <div className={"v tnum " + signClass(totals.gain)}>{totals.gain == null ? "–" : fmtCurrency(totals.gain)}</div>
+              <div className={"v tnum " + signClass(totals.gain)}>{totals.gain == null ? "–" : baseMoney(totals.gain)}</div>
               <div className={"d " + signClass(totals.gainPct)}>{fmtPct(totals.gainPct)}</div>
             </div>
             <div className="stat">
               <div className="k">Positions</div>
               <div className="v tnum">{totals.count}</div>
+              {totals.missing > 0 && <div className="d muted">{totals.missing} without a price</div>}
             </div>
           </div>
 
           <div className="panel">
-            <div className="phead"><h2>Holdings</h2><span className="sub">Click a row for full detail</span></div>
+            <div className="phead"><h2>Holdings</h2><span className="sub">Values &amp; weights in {base} · click a row for detail</span></div>
             <div className="scroll-x">
               <table>
                 <thead>
                   <tr>
                     <th>Symbol</th><th>Price</th><th>Day</th><th>Shares</th>
-                    <th>Mkt value</th><th>Avg cost</th><th>Gain / loss</th><th>Weight</th>
+                    <th>Mkt value ({base})</th><th>Avg cost</th><th>Gain / loss ({base})</th><th>Weight</th>
                   </tr>
                 </thead>
                 <tbody>
                   {rows.map((r) => (
                     <tr key={r.symbol} className="clickable" onClick={() => router.push(`/stock/${r.symbol}`)}>
                       <td><span className="sym">{r.symbol}</span>{r.name && <span className="name">{r.name}</span>}</td>
-                      <td>{money(r.price, r.currency)}</td>
+                      <td>{localMoney(r.priceMain, r.instCcy)}</td>
                       <td className={signClass(r.dayPct)}>{fmtPct(r.dayPct)}</td>
                       <td>{fmtNum(r.shares, 4)}</td>
-                      <td>{money(r.mktValue, r.currency)}</td>
-                      <td>{r.cost == null ? "–" : money(r.cost, r.currency)}</td>
-                      <td className={signClass(r.gain)}>
-                        {r.gain == null ? "–" : money(r.gain, r.currency)}
+                      <td>{baseMoney(r.mktValueBase)}</td>
+                      <td>{localMoney(r.costMain, r.instCcy)}</td>
+                      <td className={signClass(r.gainBase)}>
+                        {r.gainBase == null ? "–" : baseMoney(r.gainBase)}
                         {r.gainPct != null && <span className="muted"> ({fmtPct(r.gainPct)})</span>}
                       </td>
-                      <td>{pct(r) == null ? "–" : fmtPct(pct(r), 1).replace("+", "")}</td>
+                      <td>{weight(r) == null ? "–" : fmtPct(weight(r), 1).replace("+", "")}</td>
                     </tr>
                   ))}
                 </tbody>
@@ -197,10 +221,10 @@ export default function Dashboard() {
             </div>
           </div>
           <p className="muted" style={{ fontSize: 12, marginTop: 12 }}>
-            Prices and values are shown in each holding's local currency. The summary
-            tiles above are a raw sum and are only meaningful if your positions share a
-            currency — ask for FX normalization to a single base currency if you want
-            accurate cross-currency totals.
+            Prices and average cost are shown per share in each holding's own currency;
+            market value, gain/loss and weight are converted to {base} at live FX rates.
+            London quotes (pence) are converted to GBP automatically. Change the base
+            currency with the box up top.
           </p>
         </>
       )}

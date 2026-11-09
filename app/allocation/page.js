@@ -6,6 +6,7 @@ import {
   loadCash, saveCash, cashTotal, loadBaseCurrency, saveBaseCurrency,
   loadSnapshots, saveSnapshots, upsertSnapshot, currentMonth, uid,
 } from "@/lib/portfolio-state";
+import { instrumentCurrency } from "@/lib/normalize";
 import { fmtPct } from "@/lib/format";
 
 export default function AllocationPage() {
@@ -22,33 +23,44 @@ export default function AllocationPage() {
     setCash(c.length ? c : [{ id: uid(), label: "Bank account", amount: "" }]);
   }, []);
 
-  // live investment total from holdings (naive sum across currencies)
+  // live investment total from holdings, converted to base currency via FX
   useEffect(() => {
     const holdings = loadHoldings();
     const syms = holdings.map((h) => h.symbol).filter(Boolean);
     if (!syms.length) return;
-    fetch(`/api/data/quote?symbols=${encodeURIComponent(syms.join(","))}`)
-      .then((r) => r.json())
-      .then((j) => {
+    let cancelled = false;
+    (async () => {
+      try {
+        const qj = await (await fetch(`/api/data/quote?symbols=${encodeURIComponent(syms.join(","))}`)).json();
         const map = {};
-        (j.data || []).forEach((q) => (map[q.symbol] = q));
+        (qj.data || []).forEach((q) => (map[q.symbol] = q));
+        const ccys = new Set();
+        holdings.forEach((h) => {
+          const q = map[h.symbol];
+          if (q) { const { ccy: ic } = instrumentCurrency(q.currency); if (ic) ccys.add(ic); }
+        });
+        const fj = ccys.size
+          ? await (await fetch(`/api/data/fx?base=${encodeURIComponent(ccy)}&ccy=${encodeURIComponent([...ccys].join(","))}`)).json()
+          : { data: {} };
+        const fx = fj.data || {};
         let sum = 0, haveAny = false;
-        const seen = new Set();
         holdings.forEach((h) => {
           const q = map[h.symbol];
           if (q && q.price != null && h.shares != null) {
-            sum += q.price * h.shares; haveAny = true;
-            if (q.currency) seen.add(q.currency);
+            const { ccy: ic, div } = instrumentCurrency(q.currency);
+            const rate = ic ? fx[ic] : null;
+            if (rate != null) { sum += (q.price / div) * h.shares * rate; haveAny = true; }
           }
         });
-        if (haveAny) {
+        if (haveAny && !cancelled) {
           setLiveInv(sum);
-          setMixed(seen.size > 1);
+          setMixed(ccys.size > 1);
           setInvInput((prev) => (prev === "" ? String(Math.round(sum)) : prev));
         }
-      })
-      .catch(() => {});
-  }, []);
+      } catch { /* ignore */ }
+    })();
+    return () => { cancelled = true; };
+  }, [ccy]);
 
   const investment = Number(invInput) || 0;
   const cashSum = cashTotal(cash.map((c) => ({ amount: Number(c.amount) || 0 })));
@@ -145,8 +157,9 @@ export default function AllocationPage() {
               </div>
               {liveInv != null && (
                 <div className="muted" style={{ fontSize: 12, marginTop: 6 }}>
-                  Live portfolio sum ≈ {Math.round(liveInv).toLocaleString("en-US")}.
-                  {mixed ? " Your holdings span multiple currencies, so this raw sum is approximate — enter your true value in your base currency." : ""}
+                  Live portfolio value ≈ {Math.round(liveInv).toLocaleString("en-US")} {ccy}
+                  {mixed ? ", converted from multiple currencies at live FX rates" : ""}. You can
+                  override it above.
                 </div>
               )}
             </div>

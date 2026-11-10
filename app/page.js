@@ -33,7 +33,7 @@ export default function Dashboard() {
     if (!syms.length) { setQuotes({}); return; }
     let cancelled = false;
     setLoadingQuotes(true);
-    fetch(`/api/data/quote?symbols=${encodeURIComponent(syms.join(","))}`)
+    fetch(`/api/data/quote?symbols=${encodeURIComponent(syms.join(","))}`, { cache: "no-store" })
       .then((r) => r.json())
       .then((j) => {
         if (cancelled) return;
@@ -55,7 +55,7 @@ export default function Dashboard() {
     });
     if (!ccys.size) return;
     let cancelled = false;
-    fetch(`/api/data/fx?base=${encodeURIComponent(base)}&ccy=${encodeURIComponent([...ccys].join(","))}`)
+    fetch(`/api/data/fx?base=${encodeURIComponent(base)}&ccy=${encodeURIComponent([...ccys].join(","))}`, { cache: "no-store" })
       .then((r) => r.json())
       .then((j) => { if (!cancelled) setFx(j.data || {}); })
       .catch(() => {});

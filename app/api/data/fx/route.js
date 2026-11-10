@@ -10,7 +10,7 @@ export async function GET(req) {
   const ccy = (p.get("ccy") || "").split(",").map((s) => s.trim()).filter(Boolean);
   try {
     const data = await getFxRates(base, ccy);
-    return NextResponse.json({ base: base.toUpperCase(), data });
+    return NextResponse.json({ base: base.toUpperCase(), data }, { headers: { "Cache-Control": "no-store, max-age=0" } });
   } catch (err) {
     return NextResponse.json({ error: String(err.message || err) }, { status: 502 });
   }

@@ -12,12 +12,13 @@ export async function GET(req) {
     return NextResponse.json({ error: "symbol(s) required" }, { status: 400 });
   }
   try {
+    const NS = { headers: { "Cache-Control": "no-store, max-age=0" } };
     if (batch) {
       const data = await getQuotes(batch);
-      return NextResponse.json({ data });
+      return NextResponse.json({ data }, NS);
     }
     const one = await getQuoteDetail(single);
-    return NextResponse.json({ data: one ? [one] : [] });
+    return NextResponse.json({ data: one ? [one] : [] }, NS);
   } catch (err) {
     return NextResponse.json({ error: String(err.message || err) }, { status: 502 });
   }

@@ -31,7 +31,7 @@ export default function AllocationPage() {
     let cancelled = false;
     (async () => {
       try {
-        const qj = await (await fetch(`/api/data/quote?symbols=${encodeURIComponent(syms.join(","))}`)).json();
+        const qj = await (await fetch(`/api/data/quote?symbols=${encodeURIComponent(syms.join(","))}`, { cache: "no-store" })).json();
         const map = {};
         (qj.data || []).forEach((q) => (map[q.symbol] = q));
         const ccys = new Set();
@@ -40,7 +40,7 @@ export default function AllocationPage() {
           if (q) { const { ccy: ic } = instrumentCurrency(q.currency); if (ic) ccys.add(ic); }
         });
         const fj = ccys.size
-          ? await (await fetch(`/api/data/fx?base=${encodeURIComponent(ccy)}&ccy=${encodeURIComponent([...ccys].join(","))}`)).json()
+          ? await (await fetch(`/api/data/fx?base=${encodeURIComponent(ccy)}&ccy=${encodeURIComponent([...ccys].join(","))}`, { cache: "no-store" })).json()
           : { data: {} };
         const fx = fj.data || {};
         let sum = 0, haveAny = false;

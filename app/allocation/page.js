@@ -5,7 +5,7 @@ import { loadHoldings } from "@/lib/holdings";
 import {
   loadCash, saveCash, cashTotal, loadBaseCurrency, saveBaseCurrency,
   loadSnapshots, saveSnapshots, upsertSnapshot, currentMonth, uid,
-  loadMargin, saveMargin,
+  loadMargin, saveMargin, loadNetLiquidity, saveNetLiquidity,
 } from "@/lib/portfolio-state";
 import { DEFAULT_MARGIN_RATES, MARGIN_SEED, MARGIN_RATES_ASOF } from "@/lib/margin-rates";
 import { instrumentCurrency } from "@/lib/normalize";
@@ -20,9 +20,11 @@ export default function AllocationPage() {
   const [savedMsg, setSavedMsg] = useState("");
   const [margin, setMargin] = useState([]);
   const [fxMargin, setFxMargin] = useState({});
+  const [netLiq, setNetLiq] = useState("");
 
   useEffect(() => {
     setCcy(loadBaseCurrency());
+    setNetLiq(loadNetLiquidity());
     const c = loadCash();
     setCash(c.length ? c : [{ id: uid(), label: "Bank account", amount: "" }]);
     let m = loadMargin();
@@ -105,6 +107,9 @@ export default function AllocationPage() {
   const monthlyIntBase = annualIntBase / 12;
   const blendedRate = debtBase ? (annualIntBase / debtBase) * 100 : 0;
   const netWorth = investment + cashSum - debtBase;
+  const netLiqNum = Number(netLiq) || 0;
+  const leveragePct = netLiqNum ? (debtBase / netLiqNum) * 100 : null;
+  const leverColor = leveragePct == null ? "var(--muted)" : leveragePct < 30 ? "var(--green)" : leveragePct < 50 ? "var(--accent)" : "var(--red)";
 
   const fmt = useMemo(() => (v) => fmtCurrency(v, ccy, 0), [ccy]);
   const fmt2 = useMemo(() => (v) => fmtCurrency(v, ccy, 2), [ccy]);
@@ -133,6 +138,11 @@ export default function AllocationPage() {
   function changeCcy(v) {
     setCcy(v);
     if (/^[A-Za-z]{3}$/.test(v)) saveBaseCurrency(v);
+  }
+  function changeNetLiq(v) {
+    const clean = v.replace(/[^0-9.\-]/g, "");
+    setNetLiq(clean);
+    saveNetLiquidity(clean);
   }
   function updateMargin(id, field, value) {
     setMargin((list) => {
@@ -182,6 +192,7 @@ export default function AllocationPage() {
         <div className="stat"><div className="k">Margin debt</div><div className="v tnum neg">{debtBase ? "-" + fmt(debtBase) : fmt(0)}</div><div className="d muted">{debtBase ? `blended ${blendedRate.toFixed(2)}% /yr` : "no loan"}</div></div>
         <div className="stat"><div className="k">Net worth</div><div className="v tnum">{fmt(netWorth)}</div><div className="d muted">assets − debt</div></div>
         <div className="stat"><div className="k">Interest cost</div><div className="v tnum neg">{debtBase ? "-" + fmt(monthlyIntBase) : fmt(0)}</div><div className="d muted">{debtBase ? `per month · ${fmt(annualIntBase)}/yr` : "—"}</div></div>
+        <div className="stat"><div className="k">Margin / Net liq.</div><div className="v tnum" style={{ color: leverColor }}>{leveragePct == null ? "–" : leveragePct.toFixed(1) + "%"}</div><div className="d muted">{netLiqNum ? `of ${fmt(netLiqNum)}` : "add net liquidity"}</div></div>
       </div>
 
       <div className="grid" style={{ gridTemplateColumns: "1fr 1.2fr" }}>
@@ -249,6 +260,32 @@ export default function AllocationPage() {
           <span className="sub">Negative balances borrowed from the broker, per currency</span>
         </div>
         <div className="pbody">
+          {/* Margin vs net liquidity gauge */}
+          <div style={{ marginBottom: 20 }}>
+            <div className="flex gap8 items-center" style={{ marginBottom: 12, flexWrap: "wrap" }}>
+              <label className="muted" style={{ fontSize: 12.5 }}>Broker net liquidity ({ccy})</label>
+              <input className="input" style={{ width: 170 }} inputMode="decimal" value={netLiq}
+                onChange={(e) => changeNetLiq(e.target.value)} placeholder="e.g. 180000" />
+            </div>
+            {netLiqNum > 0 ? (
+              <>
+                <div style={{ position: "relative", height: 36, borderRadius: 8, background: "var(--panel-2)", border: "1px solid var(--line)", overflow: "hidden" }}>
+                  <div style={{ position: "absolute", left: 0, top: 0, bottom: 0, width: `${Math.min(100, leveragePct)}%`, background: leverColor, opacity: 0.85 }} />
+                  <div style={{ position: "absolute", inset: 0, display: "flex", alignItems: "center", justifyContent: "space-between", padding: "0 12px", fontSize: 12.5 }}>
+                    <span style={{ fontWeight: 650 }}>Margin debt {fmt(debtBase)}</span>
+                    <span className="muted">Net liquidity {fmt(netLiqNum)}</span>
+                  </div>
+                </div>
+                <div className="flex between" style={{ marginTop: 6, fontSize: 12 }}>
+                  <span style={{ color: leverColor, fontWeight: 650 }}>{leveragePct.toFixed(1)}% of net liquidity used</span>
+                  <span className="muted">Equity cushion {fmt(Math.max(0, netLiqNum - debtBase))}</span>
+                </div>
+              </>
+            ) : (
+              <div className="muted" style={{ fontSize: 12.5 }}>Enter your broker net liquidity above to see margin utilization.</div>
+            )}
+          </div>
+
           <div className="scroll-x">
             <table>
               <thead>

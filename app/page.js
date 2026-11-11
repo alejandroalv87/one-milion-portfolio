@@ -2,7 +2,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 import AppShell from "@/components/AppShell";
-import { parseHoldings, loadHoldings, saveHoldings } from "@/lib/holdings";
+import { parseHoldings, loadHoldings, saveHoldings, toYahooSymbol, EXCHANGE_OPTIONS } from "@/lib/holdings";
 import { instrumentCurrency, reconcileCost } from "@/lib/normalize";
 import { loadBaseCurrency, saveBaseCurrency } from "@/lib/portfolio-state";
 import { fmtCurrency, fmtNum, fmtPct, signClass } from "@/lib/format";
@@ -18,6 +18,7 @@ export default function Dashboard() {
   const [raw, setRaw] = useState("");
   const [parseMsg, setParseMsg] = useState("");
   const [sort, setSort] = useState({ key: "weight", dir: "desc" });
+  const [add, setAdd] = useState({ ticker: "", exchange: "", shares: "", cost: "" });
 
   useEffect(() => {
     setBase(loadBaseCurrency());
@@ -114,6 +115,28 @@ export default function Dashboard() {
     reader.onload = () => setRaw(String(reader.result || ""));
     reader.readAsText(f);
   }
+  function addHolding() {
+    const ticker = add.ticker.trim();
+    if (!ticker) return;
+    const symbol = toYahooSymbol(ticker, add.exchange);
+    const next = holdings.filter((h) => h.symbol !== symbol).concat([{
+      symbol,
+      rawSymbol: ticker.toUpperCase(),
+      exchange: add.exchange,
+      shares: add.shares === "" ? null : Number(add.shares),
+      cost: add.cost === "" ? null : Number(add.cost),
+      name: "",
+    }]);
+    saveHoldings(next);
+    setHoldings(next);
+    setAdd({ ticker: "", exchange: "", shares: "", cost: "" });
+    setParseMsg(`Added ${symbol}.`);
+  }
+  function removeHolding(symbol) {
+    const next = holdings.filter((h) => h.symbol !== symbol);
+    saveHoldings(next);
+    setHoldings(next);
+  }
   function changeBase(v) {
     const b = v.toUpperCase().slice(0, 4);
     setBase(b);
@@ -184,6 +207,29 @@ export default function Dashboard() {
               </label>
               {parseMsg && <span className="muted">{parseMsg}</span>}
             </div>
+
+            <div style={{ borderTop: "1px solid var(--line)", margin: "16px 0 14px" }} />
+            <label style={{ fontSize: 12.5, color: "var(--ink-2)" }}>Or add one holding manually</label>
+            <div className="flex gap8" style={{ marginTop: 8, flexWrap: "wrap", alignItems: "flex-end" }}>
+              <div><div className="muted" style={{ fontSize: 11, marginBottom: 4 }}>Ticker</div>
+                <input className="input" style={{ width: 110 }} placeholder="AAPL"
+                  value={add.ticker} onChange={(e) => setAdd({ ...add, ticker: e.target.value })} /></div>
+              <div><div className="muted" style={{ fontSize: 11, marginBottom: 4 }}>Market</div>
+                <select className="input" style={{ width: 210 }} value={add.exchange}
+                  onChange={(e) => setAdd({ ...add, exchange: e.target.value })}>
+                  {EXCHANGE_OPTIONS.map((o) => <option key={o.label} value={o.code}>{o.label}</option>)}
+                </select></div>
+              <div><div className="muted" style={{ fontSize: 11, marginBottom: 4 }}>Shares</div>
+                <input className="input" style={{ width: 90 }} inputMode="decimal" placeholder="0"
+                  value={add.shares} onChange={(e) => setAdd({ ...add, shares: e.target.value.replace(/[^0-9.\-]/g, "") })} /></div>
+              <div><div className="muted" style={{ fontSize: 11, marginBottom: 4 }}>Avg cost</div>
+                <input className="input" style={{ width: 90 }} inputMode="decimal" placeholder="0"
+                  value={add.cost} onChange={(e) => setAdd({ ...add, cost: e.target.value.replace(/[^0-9.\-]/g, "") })} /></div>
+              <button className="btn" onClick={addHolding} disabled={!add.ticker.trim()}>Add holding</button>
+            </div>
+            <div className="muted" style={{ fontSize: 11.5, marginTop: 8 }}>
+              Pick the market so the right Yahoo symbol and currency are used (e.g. ticker <b>SHEL</b> + London → SHEL.L).
+            </div>
           </div>
         </div>
       )}
@@ -226,6 +272,7 @@ export default function Dashboard() {
                     <th onClick={() => toggleSort("costMain")} style={{ cursor: "pointer" }}>Avg cost{arrow("costMain")}</th>
                     <th onClick={() => toggleSort("gainBase")} style={{ cursor: "pointer" }}>Gain / loss ({base}){arrow("gainBase")}</th>
                     <th onClick={() => toggleSort("weight")} style={{ cursor: "pointer" }}>Weight{arrow("weight")}</th>
+                    <th></th>
                   </tr>
                 </thead>
                 <tbody>
@@ -242,6 +289,9 @@ export default function Dashboard() {
                         {r.gainPct != null && <span className="muted"> ({fmtPct(r.gainPct)})</span>}
                       </td>
                       <td>{weight(r) == null ? "–" : fmtPct(weight(r), 1).replace("+", "")}</td>
+                      <td><button className="btn ghost" title="Remove holding"
+                        onClick={(e) => { e.stopPropagation(); removeHolding(r.symbol); }}
+                        style={{ padding: "2px 9px" }}>✕</button></td>
                     </tr>
                   ))}
                 </tbody>

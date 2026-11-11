@@ -137,6 +137,13 @@ export default function Dashboard() {
     saveHoldings(next);
     setHoldings(next);
   }
+  function updateHoldingField(symbol, field, value) {
+    const next = holdings.map((h) =>
+      h.symbol === symbol ? { ...h, [field]: value === "" ? null : Number(value) } : h
+    );
+    saveHoldings(next);
+    setHoldings(next);
+  }
   function changeBase(v) {
     const b = v.toUpperCase().slice(0, 4);
     setBase(b);
@@ -281,9 +288,18 @@ export default function Dashboard() {
                       <td><span className="sym">{r.symbol}</span>{r.name && <span className="name">{r.name}</span>}</td>
                       <td>{localMoney(r.priceMain, r.instCcy)}</td>
                       <td className={signClass(r.dayPct)}>{fmtPct(r.dayPct)}</td>
-                      <td>{fmtNum(r.shares, 4)}</td>
+                      <td onClick={(e) => e.stopPropagation()}>
+                        <input className="input" style={{ width: 92, padding: "5px 7px", textAlign: "right" }}
+                          inputMode="decimal" value={r.shares ?? ""}
+                          onChange={(e) => updateHoldingField(r.symbol, "shares", e.target.value.replace(/[^0-9.\-]/g, ""))} />
+                      </td>
                       <td>{baseMoney(r.mktValueBase)}</td>
-                      <td>{localMoney(r.costMain, r.instCcy)}</td>
+                      <td onClick={(e) => e.stopPropagation()}>
+                        <input className="input" style={{ width: 84, padding: "5px 7px", textAlign: "right" }}
+                          inputMode="decimal" value={r.cost ?? ""}
+                          onChange={(e) => updateHoldingField(r.symbol, "cost", e.target.value.replace(/[^0-9.\-]/g, ""))} />
+                        {r.instCcy && <span className="muted" style={{ marginLeft: 5, fontSize: 11 }}>{r.instCcy}</span>}
+                      </td>
                       <td className={signClass(r.gainBase)}>
                         {r.gainBase == null ? "–" : baseMoney(r.gainBase)}
                         {r.gainPct != null && <span className="muted"> ({fmtPct(r.gainPct)})</span>}
